@@ -14,7 +14,7 @@
     demux             Generates files with demultiplexed and trimmed reads,
                       each corresponding to a sample ID.
 ```
-### barcode_id
+### barcode_db
 ```
 usage: bartender barcode_db [-h] -b BARCODES -o OUTDIR
 
