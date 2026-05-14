@@ -240,4 +240,4 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
 report.close()
 for f in out_files.values():
     f.close()
-print(f"Успешно завершено! Демультиплексировано ридов: {fully_identified} из {count}")
+print(f"Finished successfully! Demutliplexed {fully_identified} out of {count} reads.")
