@@ -128,6 +128,11 @@ def main():
         try:
             subprocess.run(py_cmd, check=True)
             print(f"-> Finished demultiplexing. Results in {outdir}")
+            print("\n=== [Bartender] Генерация графиков статистики ===")
+            from demux_package.plots_generator import generate_demux_plots
+            
+            report_path = os.path.join(outdir, "demux_report.tsv")
+            generate_demux_plots(report_path, outdir)
         except subprocess.CalledProcessError as e:
             print(f"Pipeline error: {e}", file=sys.stderr)
             sys.exit(1)
