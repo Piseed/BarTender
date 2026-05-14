@@ -22,7 +22,7 @@ def generate_demux_plots(report_tsv_path, output_dir):
     status_counts = df['status'].value_counts()
     
     fig, ax = plt.subplots(figsize=(7, 6))
-    colors = sns.color_palette("pastel")[0:len(status_counts)]
+    colors = sns.color_palette("cividis")[0:len(status_counts)]
     
     wedges, texts, autotexts = ax.pie(
         status_counts, 
@@ -42,8 +42,7 @@ def generate_demux_plots(report_tsv_path, output_dir):
     plt.setp(autotexts, size=10, weight="bold")
     ax.set_title("Распределение ридов по статусам фильтрации", pad=20)
     
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "demux_status_distribution.png"), dpi=300)
+    plt.savefig(os.path.join(output_dir, "demux_status_distribution.png"), dpi=300, bbox_inches='tight')
     plt.close()
 
     # --- ГРАФИК 2: Распределение ридов по SampleID (Bar Chart) ---
@@ -56,17 +55,17 @@ def generate_demux_plots(report_tsv_path, output_dir):
         
     sample_counts = success_df['sample_id'].value_counts().reset_index()
     sample_counts.columns = ['SampleID', 'Read Count']
-    
+    sample_counts['SampleID'] = sample_counts['SampleID'].astype(int)
     # Ограничиваем топ-20 образцов, чтобы график не сливался, если образцов тысячи
     top_samples = sample_counts.head(20)
     
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.barplot(
         data=top_samples, 
-        x='Read Count', 
-        y='SampleID', 
+        x='SampleID', 
+        y='Read Count', 
         hue='SampleID', 
-        palette="viridis", 
+        palette="cividis", 
         legend=False,
         ax=ax
     )
@@ -77,9 +76,9 @@ def generate_demux_plots(report_tsv_path, output_dir):
     
     # Добавляем текстовые значения количества ридов на концы столбцов
     for i, v in enumerate(top_samples['Read Count']):
-        ax.text(v + (v * 0.01), i + .15, f" {v:,}", color='black', va='center', fontsize=9)
+        ax.text(v + (v * 0.01), i + .15, f" {v:,}", color='black', va='center', fontsize=7)
         
-    plt.savefig(os.path.join(output_dir, "demux_samples_yield.png"), dpi=300)
+    plt.savefig(os.path.join(output_dir, "demux_samples_yield.png"), dpi=300, bbox_inches='tight')
     plt.close()
     
     print(f"-> Графики успешно сохранены в папку: '{output_dir}'")
