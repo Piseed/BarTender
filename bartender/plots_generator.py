@@ -79,7 +79,6 @@ def generate_demux_plots(report_tsv_path, output_dir):
     for i, v in enumerate(top_samples['Read Count']):
         ax.text(v + (v * 0.01), i + .15, f" {v:,}", color='black', va='center', fontsize=9)
         
-    plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "demux_samples_yield.png"), dpi=300)
     plt.close()
     
