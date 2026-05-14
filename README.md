@@ -15,7 +15,19 @@
                       each corresponding to a sample ID.
 ```
 ### barcode_id
+```
+usage: bartender barcode_db [-h] -b BARCODES -o OUTDIR
 
+options:
+  -h, --help            show this help message and exit
+  -b BARCODES, --barcodes BARCODES
+                        Path to barcode FASTA file. File must contain
+                        sequences of barcodes WITH adapters, with barcodes
+                        facing left. Headers should begin with an F for
+                        forward barcodes, with an R for reverse barcodes
+  -o OUTDIR, --outdir OUTDIR
+                        Output directory.
+```
 ### demux
 ```
 usage: bartender demux [-h] -i INPUT_FASTQ -m MANIFEST -d DBDIR -o OUTDIR
