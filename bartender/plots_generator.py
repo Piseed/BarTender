@@ -13,7 +13,7 @@ def generate_demux_plots(report_tsv_path, output_dir):
     
     # 1. Загрузка данных отчета
     if not os.path.exists(report_tsv_path):
-        print(f"Ошибка: Файл отчета {report_tsv_path} не найден.")
+        print(f"Error: Report file {report_tsv_path} not found.")
         return
         
     df = pd.read_csv(report_tsv_path, sep='\t', index_col=False)
@@ -28,19 +28,21 @@ def generate_demux_plots(report_tsv_path, output_dir):
         status_counts, 
         labels=status_counts.index, 
         autopct='%1.1f%%',
+        rotatelabels=True,
         startangle=90, 
         colors=colors, 
-        textprops=dict(color="black"),
+        textprops={"color":"black", "fontsize":9},
         pctdistance=0.75
     )
-    
+    for text in texts:
+      text.set_rotation(30)
     # Превращаем круговую диаграмму в "пончик"
     centre_circle = plt.Circle((0,0), 0.55, fc='white')
     fig.gca().add_artist(centre_circle)
     
     # Делаем подписи процентов более читаемыми внутри секторов
     plt.setp(autotexts, size=10, weight="bold")
-    ax.set_title("Распределение ридов по статусам фильтрации", pad=20)
+    ax.set_title("Demux status distribution", pad=20)
     
     plt.savefig(os.path.join(output_dir, "demux_status_distribution.png"), dpi=300, bbox_inches='tight')
     plt.close()
@@ -50,7 +52,7 @@ def generate_demux_plots(report_tsv_path, output_dir):
     success_df = df[df['status'] == 'Fully_Identified']
     
     if success_df.empty:
-        print("Предупреждение: Нет успешно определенных ридов для построения графика образцов.")
+        print("No fully identified reads. The bar plot will not be drawn.")
         return
         
     sample_counts = success_df['sample_id'].value_counts().reset_index()
@@ -70,15 +72,13 @@ def generate_demux_plots(report_tsv_path, output_dir):
         ax=ax
     )
     
-    ax.set_title("Топ-20 образцов по количеству ридов", pad=15)
-    ax.set_xlabel("Количество прочтений (ридов)")
-    ax.set_ylabel("Идентификатор образца (Sample ID)")
+    ax.set_title("Тоp-20 samples by read count", pad=15)
+    ax.set_xlabel("Read count")
+    ax.set_ylabel("Sample ID")
     
     # Добавляем текстовые значения количества ридов на концы столбцов
-    for i, v in enumerate(top_samples['Read Count']):
-        ax.text(v + (v * 0.01), i + .15, f" {v:,}", color='black', va='center', fontsize=7)
         
     plt.savefig(os.path.join(output_dir, "demux_samples_yield.png"), dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"-> Графики успешно сохранены в папку: '{output_dir}'")
+    print(f"-> Plots saved to directory: '{output_dir}'")
