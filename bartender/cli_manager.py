@@ -54,19 +54,6 @@ def main():
     parser_demux.add_argument(
         "-o", "--outdir", required=True, help="Output directory."
     )
-
-    parser_demux.add_argument(
-        "-f",
-        "--forward",
-        required=False,
-        help="Forward barcoding adapter sequence.",
-    )
-    parser_demux.add_argument(
-        "-r",
-        "--reverse",
-        required=False,
-        help="Reverse barcoding adapter sequence.",
-    )
     parser_demux.add_argument(
         "--max_errors_adapter",
         type=int,
@@ -130,10 +117,6 @@ def main():
             os.path.abspath(args.dbdir),
             "-o",
             outdir,
-            "-f",
-            args.forward.upper(),
-            "-r",
-            args.reverse.upper(),
             "--max_errors_adapter",
             str(args.max_errors_adapter),
             "--max_errors_barcode",
