@@ -10,7 +10,9 @@ setup(
         "biopython",
         "edlib",
         "pandas",
-        "openpyxl"
+        "openpyxl",
+        "matplotlib",
+        "seaborn"
     ],
     include_package_data=True,
     package_data={
