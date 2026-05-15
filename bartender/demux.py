@@ -4,9 +4,8 @@ import os
 import sys
 import edlib
 import pandas as pd
-from Bio import SeqIO
 
-# --- Прием параметров от CLI менеджера ---
+# CLI parameters parsing
 parser = argparse.ArgumentParser()
 parser.add_argument("-i", "--input_fastq", required=True)
 parser.add_argument("-m", "--manifest", required=True)
@@ -21,10 +20,10 @@ MAX_ERRORS_ADAPTER = args.max_errors_adapter
 MAX_ERRORS_BARCODE = args.max_errors_barcode
 INDEL_BUFFER = args.indel_buffer
 
-# --- Парсинг адаптеров ---
+# Adapter parsing
 json_path = os.path.join(args.dbdir, "info_adapters.json")
 if not os.path.exists(json_path):
-    sys.exit(f"Ошибка: Файл '{json_path}' не найден.")
+    sys.exit(f"Error: File '{json_path}' not found.")
 
 with open(json_path, "r") as jf:
     adapter_config = json.load(jf)
@@ -33,13 +32,13 @@ a5_seq = adapter_config.get("adapterf", "").upper()
 a3_seq = adapter_config.get("adapterr", "").upper()
 IS_DUAL_INDEX = bool(a5_seq and a3_seq)
 
-# Настройка пулов поиска в зависимости от типа библиотеки
+# Creating searching pools based on library type
 ADAPTERS_5PRIME = {}
 if IS_DUAL_INDEX:
     ADAPTERS_5PRIME["F_raw"] = a5_seq
     ADAPTERS_5PRIME["R_raw"] = a3_seq
 else:
-    # Для Single-index на 5'-конце рида мы ищем ТОЛЬКО прямой адаптер (Forward нить)
+    # Forward adapter for single-index
     ADAPTERS_5PRIME["F_raw"] = a5_seq
 
 PAIRED_3PRIME = {}
@@ -49,7 +48,45 @@ if IS_DUAL_INDEX:
         "R_raw": ("F_revcomp", a5_seq.translate(str.maketrans("ATCG", "TAGC"))[::-1])
     }
 
-# --- 1. Загрузка коллекций баркодов ---
+# --- 1. I/O ---
+def fasta_reader(filepath):
+    """Creates a generator with FASTA records."""
+    current_id = None
+    current_seq = []
+
+    with open(filepath, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if current_id:
+                    yield current_id, "".join(current_seq)
+                current_id = line[1:].split()[0]
+                current_seq = []
+            else:
+                current_seq.append(line)
+        if current_id:
+            yield current_id, "".join(current_seq)
+def fastq_reader(filepath):
+    """Creates a generator with FASTQ records."""
+    with open(filepath, "r") as f:
+        while True:
+            # Читаем строго блоками по 4 строки
+            id_line = f.readline().strip()
+            if not id_line:
+                break # Конец файла
+            seq_line = f.readline().strip()
+            plus_line = f.readline().strip()
+            qual_line = f.readline().strip()
+
+            read_id = id_line[1:].split()[0]
+
+            yield read_id, seq_line, id_line, plus_line, qual_line
+def fastq_writer(file_object, read_id_line, seq, plus, qual):
+    """Writes a FASTQ read to a file."""
+    file_object.write(f"{read_id_line}\n{seq}\n{plus}\n{qual}\n")
+# --- 2. Barcode database loading ---
 barcode_db = {}
 groups = ["F_raw", "F_revcomp"] if not IS_DUAL_INDEX else ["F_raw", "F_revcomp", "R_raw", "R_revcomp"]
 
@@ -57,11 +94,11 @@ for group in groups:
     barcode_db[group] = {}
     fasta_name = os.path.join(args.dbdir, f"collection_{group}.fasta")
     if os.path.exists(fasta_name):
-        for r in SeqIO.parse(fasta_name, "fasta"):
-            clean_id = r.id.rsplit('_', 1)[0] if '_' in r.id else r.id
-            barcode_db[group][str(r.seq).upper()] = clean_id
+        for r_id, r_seq in fasta_reader(fasta_name):
+            clean_id = r_id.rsplit('_', 1)[0] if '_' in r_id else r_id
+            barcode_db[group][str(r_seq).upper()] = clean_id
 
-# --- 2. Загрузка Excel манифеста ---
+# --- 3. Excel manifest loading ---
 df = pd.read_excel(args.manifest)
 sample_manifest = {}
 for _, row in df.iterrows():
@@ -72,7 +109,7 @@ for _, row in df.iterrows():
         key = b1
     sample_manifest[key] = str(row['SampleID']).strip()
 
-# --- 3. Инициализация файлов вывода ---
+# --- 4. Output file initialization ---
 os.makedirs(os.path.join(args.outdir, "demux_fastq"), exist_ok=True)
 out_files = {"unidentified": open(os.path.join(args.outdir, "demux_fastq/unidentified.fastq"), "w")}
 report = open(os.path.join(args.outdir, "demux_report.tsv"), "w")
@@ -84,16 +121,13 @@ else:
 
 count, fully_identified = 0, 0
 
-# --- 4. Основной пайплайн обработки ---
-for record in SeqIO.parse(args.input_fastq, "fastq"):
-    read_seq = str(record.seq).upper()
-    read_id = record.id
+# --- 4. Main pipeline ---
+for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader("test_reads.fastq"):
+    read_seq = seq_line.upper()
     count += 1
     
     if IS_DUAL_INDEX:
-        # =====================================================================
-        # ЛОГИКА ДЛЯ DUAL-INDEX (Остается неизменной)
-        # =====================================================================
+        # For dual indexing
         best_5p_name, best_5p_err = None, MAX_ERRORS_ADAPTER + 1
         best_5p_start, best_5p_end = 0, 0
         
@@ -106,7 +140,7 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
                     best_5p_start, best_5p_end = res["locations"][0]
                     
         if not best_5p_name:
-            SeqIO.write(record, out_files["unidentified"], "fastq")
+            fastq_writer(out_files['unidentified'], id_line, seq_line, plus_line, qual_line)
             report.write(f"{read_id}\tUnidentifiable_5p\tNA\tNA\tNA\tNA\tNA\n")
             continue
 
@@ -119,7 +153,7 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
                 bc1_err, bc1_id = res_bc["editDistance"], bc_id_candidate
 
         if not bc1_id:
-            SeqIO.write(record, out_files["unidentified"], "fastq")
+            fastq_writer(out_files["unidentified"], id_line, seq_line, plus_line, qual_line)
             report.write(f"{read_id}\tAmbiguous_Barcode_5p\t{best_5p_name}\tNA\tNA\tNA\tNA\n")
             continue
 
@@ -127,7 +161,7 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
         search_zone_3p = read_seq[best_5p_end + 1:]
         res_3p = edlib.align(pair_3p_seq, search_zone_3p, mode="HW", task="locations")
         if res_3p["editDistance"] == -1 or res_3p["editDistance"] > MAX_ERRORS_ADAPTER:
-            SeqIO.write(record, out_files["unidentified"], "fastq")
+            fastq_writer(out_files['unidentified'], id_line, seq_line, plus_line, qual_line)
             report.write(f"{read_id}\tUnidentifiable_3p\t{best_5p_name}\t{bc1_id}\tNA\tNA\tNA\n")
             continue
             
@@ -143,22 +177,18 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
                 bc2_err, bc2_id = res_bc["editDistance"], bc_id_candidate
                 
         if not bc2_id:
-            SeqIO.write(record, out_files["unidentified"], "fastq")
+            fastq_writer(out_files['unidentified'], id_line, seq_line, plus_line, qual_line)
             report.write(f"{read_id}\tAmbiguous_Barcode_3p\t{best_5p_name}\t{bc1_id}\t{pair_3p_name}\tNA\tNA\n")
             continue
             
         sample_id = sample_manifest.get(frozenset((bc1_id, bc2_id)))
-        trimmed_record = record[best_5p_end + 1 : real_3p_start]
 
     else:
-        # =====================================================================
-        # БИОЛОГИЧЕСКИ КОРРЕКТНАЯ ЛОГИКА ДЛЯ SINGLE-INDEX
-        # =====================================================================
+        # For single indexing
         orientation = None # 'forward' или 'reverse_complement'
         ad_start, ad_end = 0, 0
         bc_id = None
         
-        # 1. Сначала ищем F_raw на 5'-конце (первая половина рида)
         half_read = read_seq[:len(read_seq)//2]
         res_fwd = edlib.align(a5_seq, half_read, mode="HW", task="locations")
         
@@ -175,11 +205,8 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
                 res_bc = edlib.align(bc_seq, sub_read_bc, mode="HW")
                 if res_bc["editDistance"] != -1 and res_bc["editDistance"] < bc_err:
                     bc_err, bc_id = res_bc["editDistance"], candidate
-                    
-            trimmed_record = record[ad_end + 1 :]
             
         else:
-            # 2. Если на 5'-конце чисто, ищем F_revcomp на 3'-конце (вторая половина рида)
             a5_revcomp = a5_seq.translate(str.maketrans("ATCG", "TAGC"))[::-1]
             second_half = read_seq[len(read_seq)//2:]
             res_rev = edlib.align(a5_revcomp, second_half, mode="HW", task="locations")
@@ -187,11 +214,9 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
             if res_rev["editDistance"] != -1 and res_rev["editDistance"] <= MAX_ERRORS_ADAPTER:
                 orientation = "reverse_complement"
                 start_rel, end_rel = res_rev["locations"][0]
-                # Восстанавливаем абсолютные координаты в риде
                 ad_start = len(read_seq)//2 + start_rel
                 ad_end = len(read_seq)//2 + end_rel
                 
-                # Баркод справа от адаптера (до самого конца рида)
                 window_bc_start = max(0, ad_end - INDEL_BUFFER)
                 sub_read_bc = read_seq[window_bc_start:]
                 
@@ -200,35 +225,41 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
                     res_bc = edlib.align(bc_seq, sub_read_bc, mode="HW")
                     if res_bc["editDistance"] != -1 and res_bc["editDistance"] < bc_err:
                         bc_err, bc_id = res_bc["editDistance"], candidate
-                        
-                trimmed_record = record[:ad_start]
 
-        # Валидация результатов Single-indexing
+        # Single-indexing result validation
         if not orientation:
-            SeqIO.write(record, out_files["unidentified"], "fastq")
+            fastq_writer(out_files['unidentified'], id_line, seq_line, plus_line, qual_line)
             report.write(f"{read_id}\tUnidentifiable_Adapter\tNA\tNA\tNA\tNA\n")
             continue
             
         if not bc_id:
-            SeqIO.write(record, out_files["unidentified"], "fastq")
+            fastq_writer(out_files['unidentified'], id_line, seq_line, plus_line, qual_line)
             report.write(f"{read_id}\tAmbiguous_Barcode\t{a5_seq}\t{orientation}\tNA\tNA\n")
             continue
             
         sample_id = sample_manifest.get(bc_id)
 
-    # --- Общий блок записи для обоих режимов ---
     if not sample_id:
-        SeqIO.write(record, out_files["unidentified"], "fastq")
+        fastq_writer(out_files['unidentified'], id_line, seq_line, plus_line, qual_line)
         if IS_DUAL_INDEX:
             report.write(f"{read_id}\tUnknown_Combination\t{best_5p_name}\t{bc1_id}\t{pair_3p_name}\t{bc2_id}\tNA\n")
         else:
             report.write(f"{read_id}\tUnknown_Barcode\t{a5_seq}\t{orientation}\t{bc_id}\tNA\n")
         continue
-        
+    if IS_DUAL_INDEX:
+        trimmed_seq = read_seq[best_5p_end + 1 : real_3p_start]
+        trimmed_qual = qual_line[best_5p_end + 1 : real_3p_start]
+    else:
+        if orientation == "forward":
+            trimmed_seq = read_seq[ad_end + 1 :]
+            trimmed_qual = qual_line[ad_end + 1 :]
+        else:
+            trimmed_seq = read_seq[:ad_start]
+            trimmed_qual = qual_line[:ad_start]        
     if sample_id not in out_files:
         out_files[sample_id] = open(os.path.join(args.outdir, f"demux_fastq/{sample_id}.fastq"), "w")
         
-    SeqIO.write(trimmed_record, out_files[sample_id], "fastq")
+    fastq_writer(out_files[sample_id], id_line, trimmed_seq, plus_line, trimmed_qual)
     fully_identified += 1
     
     if IS_DUAL_INDEX:
@@ -236,7 +267,6 @@ for record in SeqIO.parse(args.input_fastq, "fastq"):
     else:
         report.write(f"{read_id}\tFully_Identified\t{a5_seq}\t{orientation}\t{bc_id}\t{sample_id}\n")
 
-# Закрытие файлов
 report.close()
 for f in out_files.values():
     f.close()
