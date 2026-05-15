@@ -7,7 +7,6 @@ setup(
     author="",
     packages=find_packages(),
     install_requires=[
-        "biopython",
         "edlib",
         "pandas",
         "openpyxl",
