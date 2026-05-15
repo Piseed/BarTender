@@ -63,14 +63,25 @@ def main():
     parser_demux.add_argument(
         "--max_errors_barcode",
         type=int,
-        default=2,
-        help="Max errors in barcode, default: 2",
+        default=0,
+        help="Max errors in barcode, default: 0",
     )
     parser_demux.add_argument(
         "--indel_buffer",
         type=int,
         default=5,
         help="Max distance of barcode from adapter, default: 5",
+    )
+    parser_demux.add_argument(
+        "--search_ends",
+        action="store_true",
+        help="Search read ends only (windows defined by --window_size)"
+    )
+    parser_demux.add_argument(
+        "--window_size",
+        type=int,
+        default=100,
+        help="Search window size on both ends if --search_ends is selected (default: 100)"
     )
 
     args = parser.parse_args()
@@ -123,7 +134,11 @@ def main():
             str(args.max_errors_barcode),
             "--indel_buffer",
             str(args.indel_buffer),
+            "--window_size", 
+            str(args.window_size)
         ]
+        if args.search_ends:
+            py_cmd.append("--search_ends")
 
         try:
             subprocess.run(py_cmd, check=True)
