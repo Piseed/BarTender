@@ -14,11 +14,15 @@ parser.add_argument("-o", "--outdir", required=True)
 parser.add_argument("--max_errors_adapter", type=int, required=True)
 parser.add_argument("--max_errors_barcode", type=int, required=True)
 parser.add_argument("--indel_buffer", type=int, required=True)
+parser.add_argument("--window_size", type=int, required=True)
+parser.add_argument("--search_ends", action="store_true")
 args = parser.parse_args()
 
 MAX_ERRORS_ADAPTER = args.max_errors_adapter
 MAX_ERRORS_BARCODE = args.max_errors_barcode
 INDEL_BUFFER = args.indel_buffer
+WINDOW_SIZE = args.window_size
+SEARCH_ENDS = args.search_ends
 
 # Adapter parsing
 json_path = os.path.join(args.dbdir, "info_adapters.json")
@@ -96,7 +100,7 @@ for group in groups:
     if os.path.exists(fasta_name):
         for r_id, r_seq in fasta_reader(fasta_name):
             clean_id = r_id.rsplit('_', 1)[0] if '_' in r_id else r_id
-            barcode_db[group][str(r_seq).upper()] = clean_id
+            barcode_db[group][r_seq.upper()] = clean_id
 
 # --- 3. Excel manifest loading ---
 df = pd.read_excel(args.manifest)
@@ -122,7 +126,7 @@ else:
 count, fully_identified = 0, 0
 
 # --- 4. Main pipeline ---
-for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader("test_reads.fastq"):
+for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader(args.input_fastq):
     read_seq = seq_line.upper()
     count += 1
     
@@ -131,9 +135,9 @@ for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader("test_reads
         best_5p_name, best_5p_err = None, MAX_ERRORS_ADAPTER + 1
         best_5p_start, best_5p_end = 0, 0
         
-        half_read = read_seq[:len(read_seq)//2]
+        search_zone_5p = read_seq[:WINDOW_SIZE] if SEARCH_ENDS else read_seq[:len(read_seq)//2]
         for name, seq in ADAPTERS_5PRIME.items():
-            res = edlib.align(seq, half_read, mode="HW", task="locations")
+            res = edlib.align(seq, search_zone_5p, mode="HW", task="locations")
             if res["editDistance"] != -1 and res["editDistance"] <= MAX_ERRORS_ADAPTER:
                 if res["editDistance"] < best_5p_err:
                     best_5p_err, best_5p_name = res["editDistance"], name
@@ -158,7 +162,13 @@ for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader("test_reads
             continue
 
         pair_3p_name, pair_3p_seq = PAIRED_3PRIME[best_5p_name]
-        search_zone_3p = read_seq[best_5p_end + 1:]
+        if SEARCH_ENDS:
+            start_idx = max(best_5p_end + 1, len(read_seq) - WINDOW_SIZE)
+            search_zone_3p = read_seq[start_idx:]
+            shift_3p = start_idx
+        else:
+            search_zone_3p = read_seq[best_5p_end + 1:]
+            shift_3p = best_5p_end + 1
         res_3p = edlib.align(pair_3p_seq, search_zone_3p, mode="HW", task="locations")
         if res_3p["editDistance"] == -1 or res_3p["editDistance"] > MAX_ERRORS_ADAPTER:
             fastq_writer(out_files['unidentified'], id_line, seq_line, plus_line, qual_line)
@@ -166,8 +176,8 @@ for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader("test_reads
             continue
             
         start_3p_rel, end_3p_rel = res_3p["locations"][0]
-        real_3p_start = best_5p_end + 1 + start_3p_rel
-        real_3p_end = best_5p_end + 1 + end_3p_rel
+        real_3p_start = shift_3p + start_3p_rel
+        real_3p_end = shift_3p + end_3p_rel
         
         bc2_id, bc2_err = None, MAX_ERRORS_BARCODE + 1
         sub_read_bc2 = read_seq[max(0, real_3p_end - INDEL_BUFFER) :]
@@ -182,15 +192,15 @@ for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader("test_reads
             continue
             
         sample_id = sample_manifest.get(frozenset((bc1_id, bc2_id)))
-
+        
     else:
         # For single indexing
         orientation = None # 'forward' или 'reverse_complement'
         ad_start, ad_end = 0, 0
         bc_id = None
         
-        half_read = read_seq[:len(read_seq)//2]
-        res_fwd = edlib.align(a5_seq, half_read, mode="HW", task="locations")
+        search_zone_5p = read_seq[:WINDOW_SIZE] if SEARCH_ENDS else read_seq[:len(read_seq)//2]
+        res_fwd = edlib.align(a5_seq, search_zone_5p, mode="HW", task="locations")
         
         if res_fwd["editDistance"] != -1 and res_fwd["editDistance"] <= MAX_ERRORS_ADAPTER:
             orientation = "forward"
@@ -208,14 +218,20 @@ for read_id, seq_line, id_line, plus_line, qual_line in fastq_reader("test_reads
             
         else:
             a5_revcomp = a5_seq.translate(str.maketrans("ATCG", "TAGC"))[::-1]
-            second_half = read_seq[len(read_seq)//2:]
-            res_rev = edlib.align(a5_revcomp, second_half, mode="HW", task="locations")
+            if SEARCH_ENDS:
+                start_idx = max(0, len(read_seq) - WINDOW_SIZE)
+                search_zone_3p = read_seq[start_idx:]
+                shift_rev = start_idx
+            else:
+                search_zone_3p = read_seq[len(read_seq)//2:]
+                shift_rev = len(read_seq)//2
+            res_rev = edlib.align(a5_revcomp, search_zone_3p, mode="HW", task="locations")
             
             if res_rev["editDistance"] != -1 and res_rev["editDistance"] <= MAX_ERRORS_ADAPTER:
                 orientation = "reverse_complement"
                 start_rel, end_rel = res_rev["locations"][0]
-                ad_start = len(read_seq)//2 + start_rel
-                ad_end = len(read_seq)//2 + end_rel
+                ad_start = shift_rev + start_rel
+                ad_end = shift_rev + end_rel
                 
                 window_bc_start = max(0, ad_end - INDEL_BUFFER)
                 sub_read_bc = read_seq[window_bc_start:]
